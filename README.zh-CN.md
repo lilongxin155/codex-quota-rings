@@ -45,7 +45,7 @@
 在项目根目录打开 PowerShell：
 
 ```powershell
-.\scripts\Build.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build.ps1
 ```
 
 构建产物位于 `release/`。要安装自行构建的版本，请将 `scripts/` 中的 `Install.ps1`、`Install.cmd`、`Uninstall.ps1`、`Uninstall.cmd`、`Launch.vbs` 一并复制到 `release/`，再运行 `release\Install.cmd`。

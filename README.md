@@ -50,7 +50,7 @@ The app writes local status and error files in its installation folder. These ca
 Open PowerShell in the repository root and run:
 
 ```powershell
-.\scripts\Build.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build.ps1
 ```
 
 This uses the .NET Framework compiler included with Windows and writes the executable and configuration to `release/`. To install a self-built copy, copy `scripts/Install.ps1`, `Install.cmd`, `Uninstall.ps1`, `Uninstall.cmd`, and `Launch.vbs` into `release/`, then run `release\Install.cmd`.
