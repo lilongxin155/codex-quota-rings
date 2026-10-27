@@ -1,6 +1,8 @@
-# Codex Quota Rings
+# Codex Quota Rings · Codex 额度监控圆环
 
-A small Windows companion that shows your remaining Codex usage beside your profile avatar. It follows the desktop window and refreshes automatically.
+A Windows desktop widget for monitoring Codex usage limits and remaining quota beside your profile avatar. It follows the desktop window and refreshes automatically.
+
+一个 Codex 额度监控与用量查询桌面挂件：在头像上方显示剩余额度，支持 Windows 窗口跟随和自动刷新。
 
 [中文说明](README.zh-CN.md) · [Download the latest release](https://github.com/lilongxin155/codex-quota-rings/releases/latest)
 
