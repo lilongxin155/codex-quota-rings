@@ -7,7 +7,10 @@ $exe = Join-Path $Destination 'CodexQuotaWidget.exe'
 $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($existing -and $existing.Actions.Execute -ne $exe) { throw "A different task named '$TaskName' exists. It was not changed." }
 if ($existing) { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false }
-Get-CimInstance Win32_Process -Filter "Name='CodexQuotaWidget.exe'" | Where-Object { $_.ExecutablePath -eq $exe } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Get-CimInstance Win32_Process -Filter "Name='CodexQuotaWidget.exe'" | Where-Object { $_.ExecutablePath -eq $exe } | ForEach-Object {
+    $process = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+    if ($process) { Stop-Process -InputObject $process -Force -ErrorAction SilentlyContinue; if (-not $process.WaitForExit(5000)) { throw 'The widget process did not exit.' }; $process.Dispose() }
+}
 if ($TaskName -eq 'CodexQuotaRings' -and $Destination -eq (Join-Path $env:LOCALAPPDATA 'CodexQuotaRings')) {
     $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Codex Quota Rings.lnk'
     if (Test-Path -LiteralPath $shortcut) { Remove-Item -LiteralPath $shortcut }

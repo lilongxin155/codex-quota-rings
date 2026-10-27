@@ -20,6 +20,80 @@ static class Texts {
  static readonly bool Chinese=System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName=="zh";
  public static string T(string chinese,string english){return Chinese?chinese:english;}
 }
+// Window discovery is shared by the UI and the monitor without loading WPF.
+static class AppWindows {
+ [StructLayout(LayoutKind.Sequential)] struct RECT {public int left,top,right,bottom;}
+ [DllImport("user32.dll")] static extern bool IsWindow(IntPtr window);
+ [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr window,uint flags);
+ [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr window,int index);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowTextLength(IntPtr window);
+ [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window,out uint processId);
+ [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+ [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+ [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr window,out RECT rect);
+ delegate bool EnumWindowsProc(IntPtr window,IntPtr parameter);
+ [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback,IntPtr parameter);
+ [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access,bool inherit,uint processId);
+ [DllImport("kernel32.dll",CharSet=CharSet.Unicode)] static extern bool QueryFullProcessImageName(IntPtr process,uint flags,System.Text.StringBuilder name,ref uint size);
+ [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+ [DllImport("user32.dll")] static extern bool IsIconic(IntPtr window);
+ [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr window,uint relation);
+ [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
+ [StructLayout(LayoutKind.Sequential)] struct POINT {public int x,y;}
+ [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr window,ref POINT point);
+ [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window,out RECT rect);
+ [DllImport("dwmapi.dll",EntryPoint="DwmGetWindowAttribute")] static extern int GetCloaked(IntPtr window,int attribute,out int value,int size);
+ [DllImport("dwmapi.dll",EntryPoint="DwmGetWindowAttribute")] static extern int GetFrame(IntPtr window,int attribute,out RECT rect,int size);
+ [DllImport("gdi32.dll")] static extern IntPtr CreateRectRgn(int left,int top,int right,int bottom);
+ [DllImport("gdi32.dll")] static extern bool SetRectRgn(IntPtr region,int left,int top,int right,int bottom);
+ [DllImport("gdi32.dll")] static extern int CombineRgn(IntPtr destination,IntPtr first,IntPtr second,int mode);
+ [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr region);
+ public static bool IsExposed(IntPtr window){
+  int cloaked;if(window==IntPtr.Zero||!IsWindowVisible(window)||IsIconic(window)||(GetCloaked(window,14,out cloaked,4)==0&&cloaked!=0))return false;
+  RECT client;POINT origin=new POINT();if(!GetClientRect(window,out client)||!ClientToScreen(window,ref origin))return false;
+  int left=Math.Max(origin.x,GetSystemMetrics(76)),top=Math.Max(origin.y,GetSystemMetrics(77));
+  int right=Math.Min(origin.x+client.right,GetSystemMetrics(76)+GetSystemMetrics(78)),bottom=Math.Min(origin.y+client.bottom,GetSystemMetrics(77)+GetSystemMetrics(79));
+  if(left>=right||top>=bottom)return false;
+  IntPtr exposed=CreateRectRgn(left,top,right,bottom),cover=CreateRectRgn(0,0,0,0);
+  try{
+   if(exposed==IntPtr.Zero||cover==IntPtr.Zero)return true;
+   // Check Z order only on the monitor/refresh path, never in drag callbacks.
+   // Layered windows may be translucent (including our rings); keep reading if unsure.
+   for(IntPtr above=GetWindow(window,3);above!=IntPtr.Zero;above=GetWindow(above,3)){
+    if(!IsWindowVisible(above)||IsIconic(above)||(GetWindowLong(above,-20)&0x80000)!=0||(GetCloaked(above,14,out cloaked,4)==0&&cloaked!=0))continue;
+    RECT r;if(GetFrame(above,9,out r,16)!=0&&!GetWindowRect(above,out r))continue;
+    if(r.right<=left||r.left>=right||r.bottom<=top||r.top>=bottom)continue;
+    if(!SetRectRgn(cover,r.left,r.top,r.right,r.bottom))return true;
+    int remaining=CombineRgn(exposed,exposed,cover,4);if(remaining==1)return false;if(remaining==0)return true;
+   }
+   return true;
+  }finally{if(exposed!=IntPtr.Zero)DeleteObject(exposed);if(cover!=IntPtr.Zero)DeleteObject(cover);}
+ }
+ public static bool IsMain(IntPtr window){
+  // Maximized/fullscreen windows may have no WS_CAPTION. Exclude tools/children.
+  if(window==IntPtr.Zero||!IsWindow(window)||GetAncestor(window,2)!=window||(GetWindowLong(window,-20)&0x80)!=0||(GetWindowLong(window,-16)&0x40000000)!=0||GetWindowTextLength(window)==0)return false;
+  uint pid;GetWindowThreadProcessId(window,out pid);IntPtr process=OpenProcess(0x1000,false,pid);if(process==IntPtr.Zero)return false;
+  try{var name=new System.Text.StringBuilder(1024);uint size=(uint)name.Capacity;return QueryFullProcessImageName(process,0,name,ref size)&&Path.GetFileName(name.ToString()).Equals("ChatGPT.exe",StringComparison.OrdinalIgnoreCase);}finally{CloseHandle(process);}
+ }
+ public static IntPtr Find(){var foreground=GetForegroundWindow();if(IsMain(foreground))return foreground;IntPtr selected=IntPtr.Zero;long area=0;EnumWindows((window,p)=>{if(IsWindowVisible(window)&&IsMain(window)){RECT r;if(GetClientRect(window,out r)){long size=(long)r.right*r.bottom;if(size>area){area=size;selected=window;}}}return true;},IntPtr.Zero);return selected;}
+}
+static class Program {
+ static void RunMonitor(){
+  Process child=null;IntPtr parent=IntPtr.Zero;string directory=AppDomain.CurrentDomain.BaseDirectory;
+  Action stop=()=>{if(child!=null){try{if(!child.HasExited){child.Kill();child.WaitForExit(1000);}}catch{}child.Dispose();child=null;}};
+  AppDomain.CurrentDomain.ProcessExit+=(s,e)=>stop();
+  // A sleeping monitor needs neither Application nor a WPF dispatcher.
+  while(true){
+   try{var candidate=File.Exists(Path.Combine(directory,"paused.flag"))?IntPtr.Zero:AppWindows.Find();if(!AppWindows.IsExposed(candidate)){bool wasRunning=child!=null;stop();parent=IntPtr.Zero;if(wasRunning)File.WriteAllText(Path.Combine(directory,"window-status.json"),"{\"checkedUtc\":\""+DateTime.UtcNow.ToString("o")+"\",\"target\":"+candidate.ToInt64()+",\"visible\":false,\"reason\":\"sleeping-not-on-screen\"}");}else{if(child!=null&&(child.HasExited||candidate!=parent))stop();if(child==null){parent=candidate;child=Process.Start(new ProcessStartInfo(Path.Combine(directory,"CodexQuotaWidget.exe"),"--attached"){UseShellExecute=false,CreateNoWindow=true});}}}
+   catch(Exception e){try{File.WriteAllText(Path.Combine(directory,"monitor-error.txt"),DateTime.Now.ToString("s")+" "+e.Message);}catch{}}
+   Thread.Sleep(500);
+  }
+ }
+ // Keep WPF type resolution out of the monitor's startup/JIT path.
+ [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+ static void RunWidget(){RenderOptions.ProcessRenderMode=RenderMode.SoftwareOnly;new Application().Run(new Widget());}
+ [STAThread] public static void Main(){var args=Environment.GetCommandLineArgs();bool attached=Array.IndexOf(args,"--attached")>=0;if(Array.IndexOf(args,"--resume")>=0){string flag=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"paused.flag");if(File.Exists(flag))File.Delete(flag);}bool first;using(var mutex=new Mutex(true,attached?"Local\\CodexQuotaWidget_1":"Local\\CodexQuotaWidget_Monitor",out first)){if(!first)return;try{if(attached)RunWidget();else RunMonitor();}catch(Exception e){File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"fatal-error.txt"),e.ToString());}}}
+}
 class Rpc : IDisposable {
  Process process; IntPtr job; int serial; readonly object sync=new object();
  [StructLayout(LayoutKind.Sequential)] struct BasicLimit {public long processTime,jobTime; public uint flags; public UIntPtr minWorking,maxWorking;public uint active;public UIntPtr affinity;public uint priority,scheduling;}
@@ -204,16 +278,11 @@ class Widget : Window {
   stateHook=SetWinEventHook(3,0x17,IntPtr.Zero,stateCallback,0,0,0);
   if(locationHook==IntPtr.Zero||stateHook==IntPtr.Zero)throw new System.ComponentModel.Win32Exception(Texts.T("无法监听窗口变化","Could not monitor window changes"));
  }
- static bool IsMainAppWindow(IntPtr window){
-  // Codex uses a custom title bar and drops WS_CAPTION when maximized/fullscreen.
-  // Identify top-level titled app windows, while excluding tool and child windows.
-  if(window==IntPtr.Zero||!IsWindow(window)||GetAncestor(window,2)!=window||(GetWindowLong(window,-20)&0x80)!=0||(GetWindowLong(window,-16)&0x40000000)!=0||GetWindowTextLength(window)==0)return false;
-  uint pid;GetWindowThreadProcessId(window,out pid);try{using(var p=Process.GetProcessById((int)pid))return p.ProcessName.Equals("ChatGPT",StringComparison.OrdinalIgnoreCase);}catch{return false;}
- }
- static IntPtr FindMainAppWindow(){var foreground=GetForegroundWindow();if(IsMainAppWindow(foreground))return foreground;IntPtr selected=IntPtr.Zero;long area=0;EnumWindows((window,p)=>{if(IsWindowVisible(window)&&IsMainAppWindow(window)){RECT r;if(GetClientRect(window,out r)){long size=(long)r.right*r.bottom;if(size>area){area=size;selected=window;}}}return true;},IntPtr.Zero);return selected;}
+ static bool IsMainAppWindow(IntPtr window){return AppWindows.IsMain(window);}
+ static IntPtr FindMainAppWindow(){return AppWindows.Find();}
  static bool ForegroundMatches(IntPtr foreground,IntPtr target,IntPtr widget){uint a,b;GetWindowThreadProcessId(foreground,out a);GetWindowThreadProcessId(target,out b);return foreground==widget||(a!=0&&a==b);}
  async Task Refresh() {
-  if(busy||closing||target==IntPtr.Zero)return;busy=true;
+  if(busy||closing||!AppWindows.IsExposed(target))return;busy=true;
   try {
    if(rpc==null) {rpc=new Rpc();await rpc.Start();}
    var data=await rpc.Call("account/rateLimits/read",new {});if(closing)return;
@@ -239,12 +308,5 @@ class Widget : Window {
  void SetTip(string text){((Border)Content).ToolTip=text;}
  void SavePreview(){Dispatcher.BeginInvoke(new Action(()=>{try {ContentPresenter view=new ContentPresenter {Content=ClonePreview()};view.Measure(new Size(162,366));view.Arrange(new Rect(0,0,162,366));var bmp=new RenderTargetBitmap(162,366,288,288,PixelFormats.Pbgra32);var border=ClonePreview();border.Measure(new Size(54,122));border.Arrange(new Rect(0,0,54,122));bmp.Render(border);var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(bmp));using(var f=File.Create(Path.Combine(directory,"preview.png")))encoder.Save(f);}catch{}}),DispatcherPriority.Render);}
  Border ClonePreview(){var s=new StackPanel {Margin=new Thickness(1,3,1,3)};s.Children.Add(new Ring {Width=50,Height=58,Label=shortRing.Label,Remaining=shortRing.Remaining,Stale=shortRing.Stale});s.Children.Add(new Ring {Width=50,Height=58,Label=weekRing.Label,Remaining=weekRing.Remaining,Stale=weekRing.Stale});return new Border {Width=54,Height=122,CornerRadius=new CornerRadius(16),Background=new SolidColorBrush(Color.FromRgb(250,249,253)),Child=s};}
- static void RunMonitor(){
-  var app=new Application {ShutdownMode=ShutdownMode.OnExplicitShutdown};Process child=null;IntPtr parent=IntPtr.Zero;var timer=new DispatcherTimer {Interval=TimeSpan.FromMilliseconds(500)};
-  Action stop=()=>{if(child!=null){try{if(!child.HasExited){child.Kill();child.WaitForExit(1000);}}catch{}child.Dispose();child=null;}};
-  Action check=()=>{try{var candidate=FindMainAppWindow();bool paused=File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"paused.flag"));if(paused||candidate==IntPtr.Zero){stop();parent=IntPtr.Zero;return;}if(child!=null&&(child.HasExited||candidate!=parent))stop();if(child==null){parent=candidate;child=Process.Start(new ProcessStartInfo(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"CodexQuotaWidget.exe"),"--attached"){UseShellExecute=false,CreateNoWindow=true});}}catch(Exception e){try{File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"monitor-error.txt"),DateTime.Now.ToString("s")+" "+e.Message);}catch{}}};
-  timer.Tick+=(s,e)=>check();app.Exit+=(s,e)=>{timer.Stop();stop();};timer.Start();check();app.Run();
- }
- [STAThread] public static void Main() {var args=Environment.GetCommandLineArgs();bool attached=args.Contains("--attached");if(args.Contains("--resume")){string flag=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"paused.flag");if(File.Exists(flag))File.Delete(flag);}bool first;using(var mutex=new Mutex(true,attached?"Local\\CodexQuotaWidget_1":"Local\\CodexQuotaWidget_Monitor",out first)) {if(!first)return;try {if(attached)new Application().Run(new Widget());else RunMonitor();}catch(Exception e){File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"fatal-error.txt"),e.ToString());}}}
 }
 }

@@ -15,6 +15,7 @@ A Windows desktop widget for monitoring Codex usage limits and remaining quota b
 - Two rings show the remaining percentage for the short and long usage windows returned by Codex (for example, 5 hours and one week). Actual window lengths depend on your account.
 - Refreshes every 10 seconds; click a ring to refresh now. Hover to see reset times and the last successful refresh.
 - Follows the Codex window when it moves, maximizes, minimizes, closes, or reopens.
+- Sleeps when Codex is minimized, hidden, cloaked on another virtual desktop, off-screen, or fully covered by ordinary opaque windows. The widget UI and its quota-reader process exit; only the lightweight monitor stays running. Showing Codex again starts an immediate refresh, then resumes the 10-second schedule. Partial visibility keeps it active; potentially translucent layered windows are treated conservatively.
 - Checks for the navigation rail update action and moves out of its way when their rectangles overlap. Detection recognizes English and Chinese update labels; you can also move the widget with its right-click menu.
 - A gray ring indicates stale data. A dash means a limit is unavailable, rather than a fabricated value.
 - Interface text follows Windows' display language: Chinese for Chinese locales, English otherwise.

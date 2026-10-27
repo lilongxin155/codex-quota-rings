@@ -12,7 +12,10 @@ foreach ($name in @('CodexQuotaWidget.exe', 'CodexQuotaWidget.exe.config', 'Laun
 $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($existing -and $existing.Actions.Execute -ne $exe) { throw "A different task named '$TaskName' already exists. It was not changed." }
 if ($existing) { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue }
-Get-CimInstance Win32_Process -Filter "Name='CodexQuotaWidget.exe'" | Where-Object { $_.ExecutablePath -eq $exe } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Get-CimInstance Win32_Process -Filter "Name='CodexQuotaWidget.exe'" | Where-Object { $_.ExecutablePath -eq $exe } | ForEach-Object {
+    $process = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+    if ($process) { Stop-Process -InputObject $process -Force -ErrorAction SilentlyContinue; if (-not $process.WaitForExit(5000)) { throw 'The previous widget process did not exit.' }; $process.Dispose() }
+}
 New-Item -ItemType Directory -Path $Destination -Force | Out-Null
 foreach ($name in @('CodexQuotaWidget.exe', 'CodexQuotaWidget.exe.config', 'Launch.vbs', 'Uninstall.ps1', 'Uninstall.cmd')) {
     Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $Destination $name) -Force
