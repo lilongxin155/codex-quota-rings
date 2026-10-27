@@ -1,0 +1,12 @@
+/release/
+/dist/
+*.user
+*.pdb
+status.json
+window-status.json
+event-latency.json
+last-error.txt
+monitor-error.txt
+fatal-error.txt
+position.txt
+paused.flag
